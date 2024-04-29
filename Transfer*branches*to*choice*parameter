@@ -1,0 +1,144 @@
+def GIT_URL = "https://github.com/eminnguven/jenkins/new/main" //TODO: MUST UPDATED
+def GIT_BRANCH ="$BRANCH_NAME" //TODO: MUST UPDATED
+
+def GIT_REFSPEC ="+refs/heads/${GIT_BRANCH}:refs/remotes/origin/${GIT_BRANCH}" 
+def PROJECT_JDK   ="OPEN_JDK_HOME17"  //TODO: MUST UPDATED
+def MVN_CMD ="/var/local/maven/apache-maven-3.8.3/bin/./mvn clean install -U -X" //TODO: MUST UPDATED
+def STEP_STATE = false
+
+
+pipeline {
+    agent {label 'jenkins_node3_express'}
+
+    // timeout all agents on pipeline if not complete in 5 minutes or less.
+    options {
+       timeout(time: 60, unit: 'MINUTES')  
+    }
+
+    environment {
+        DATE = new Date().format('yy.M')
+        TAG = "${DATE}.${BUILD_NUMBER}"
+        GIT_TIMEOUT = 40 //Git clone timeout       
+        JENKINS_PATH = sh(script: 'pwd', , returnStdout: true).trim() //Stage içerisinde kullanımına dikkat
+        }
+
+    //TOOLS
+    tools {
+        jdk PROJECT_JDK
+    }
+
+    //PIPELINE JOB PARAMETERS
+    parameters {        
+         choice(name: 'BRANCH_NAME', choices: getBranchChoices(), description: 'Select branch to build')
+        
+        //WORKSPACE
+        booleanParam(defaultValue: false, description: '', name: 'CLEAN_WORKSPACE')
+
+        //CACHE_CLEAN
+        booleanParam(defaultValue: false, description: 'İlgili alan secilirse yarn cache clean yapacaktır.', name: 'CACHE_CLEAN')
+        
+        //NOTIFICATION
+        string(defaultValue: '', name: 'MAIL_TO', trim: true) //TODO: MUST UPDATED
+    }
+
+    //webhook trigger
+  
+    //STAGES
+    stages 
+    {
+        stage('INFO') {
+            steps {
+                //env vars
+                echo "PATH=${JENKINS_PATH}"
+                sh 'echo "JP=$JENKINS_PATH"'
+
+                //JOB Parameters
+                echo "CLEAN_WORKSPACE -->${params['CLEAN_WORKSPACE']}"               
+                echo "CACHE_CLEAN -->${params['CACHE_CLEAN']}"
+                echo "GIT_URL         -->${GIT_URL}"
+                echo "GIT_BRANCH      -->${GIT_BRANCH}"
+                echo "GIT_REFSPEC     -->${GIT_REFSPEC}"
+                
+                echo "MAIL_TO         -->${params['MAIL_TO']}"
+
+                //TOOL VERSIONS
+                echo sh(script: 'java -version', , returnStdout: true)
+            }
+        }
+
+        stage('WORKSPACE') {
+            steps {  
+                script {              
+                    echo 'Hello from CLEANUP WORKSPACE'    
+                    echo "INFO :Workspace --> ${WORKSPACE}." //SAMPLE: Usage of global ENV variable
+
+                    if (Boolean.valueOf(CLEAN_WORKSPACE)) {
+                        echo "INFO :Cleaning current workspace ${params['CLEAN_WORKSPACE']}." //SAMPLE: Usage of parameter variable
+                        deleteDir() 
+                    }
+                    else{
+                        echo "INFO :Using existing WORKSPACE."
+                    }
+                }
+            }
+        }
+
+
+
+
+        stage('BUILD TOOL') {
+            steps {
+                sh '''
+                pwd
+                cd 	togg-ms-parent
+                git checkout $BRANCH_NAME
+                /var/local/maven/apache-maven-3.8.3/bin/./mvn clean install -U
+                 '''
+            }
+        }
+
+
+
+}
+
+
+    //POST ACTIONS
+    post {
+  
+        success {
+            echo "successfully finished :${currentBuild.fullDisplayName} --> ${env.BUILD_URL}"
+        }
+        
+        failure {
+            script {   
+                if (params['MAIL_TO'].trim() == '') {
+                    echo "Failed Pipeline: ${currentBuild.fullDisplayName} Something is wrong with ${env.BUILD_URL}"
+                } else {
+                    mail to: "${params['MAIL_TO']}", subject: "Failed Pipeline: ${currentBuild.fullDisplayName}",
+                        body: "Something is wrong with ${env.BUILD_URL}"
+                }            
+            }
+        }
+    }
+}
+
+def getBranchChoices() {
+    // Git depo klonu oluştur
+    def branches = []
+    node('jenkins_node3_express') {
+         sh '''
+         rm -rf togg-ms-parent
+        git clone https://github.com/eminnguven/jenkins/new/main
+         cd jenkins
+'''
+        // Çalışma dizinini ayarlayın
+        dir("$WORKSPACE/jenkins") {
+            // Git komutunu doğru şekilde kullanın
+            def output = sh(script: 'git branch -r | sed \'s/ *origin\\///\'', returnStdout: true).trim()
+            branches = output.tokenize('\n')
+        }
+    }
+
+    // Dal isimlerini dön
+    return branches
+}
